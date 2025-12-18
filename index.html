@@ -15,7 +15,7 @@
 
       /* 👉 方案 2：黑曜石金 (高端黑金) - 纯黑背景，奢华金色 */
 
-      --bg-dark: #000000;
+      --bg-dark: #5F2E2E;
       --panel-bg: rgba(20, 20, 20, 0.7);
       --glass-border: rgba(255, 255, 255, 0.12);
       --accent: #ffd700;
@@ -910,7 +910,7 @@
         <div style="flex:1"></div>
         <div class="status-bar" id="status"></div>
         <div class="key-section">
-          <div class="key-label">API Key (联系作者微信 <b>duge360</b> 购买，每次最低0.3元，价格可能变动)</div>
+          <div class="key-label">API Key (联系作者微信 <b>duge360</b> 购买，每次0.3元，价格可能变动)</div>
           <div class="key-input-row">
             <input type="text" id="userKey" placeholder="sk-..." style="height:34px;">
             <button class="btn-sm" id="saveKey">保存</button>
@@ -1160,15 +1160,15 @@
         },
       ];
 
-      // ================= 基础配置 =================
+      // ================= 基础配置 (Grsai API) =================
       const PUBLIC_R2_DOMAIN = 'https://cdn.gordensun.com/bananaproimage';
-      const ENDPOINT = 'https://hk-api.gptbest.vip/v1/images/generations';
-      const TASK_ENDPOINT = 'https://hk-api.gptbest.vip/v1/images/tasks'; // 任务查询端点
-      const MODEL = 'nano-banana-2';
-      const STORE_KEY = 'nb_ppt_v3:key';
-      const HISTORY_KEY = 'nb_ppt_v3:history'; // 历史记录存储 key
-      const POLL_INTERVAL = 5000; // 轮询间隔 3 秒
-      const MAX_POLL_ATTEMPTS = 120; // 最大轮询次数 (6分钟)
+      const ENDPOINT = 'https://grsai.dakka.com.cn/v1/draw/nano-banana';
+      const RESULT_ENDPOINT = 'https://grsai.dakka.com.cn/v1/draw/result';
+      const MODEL = 'nano-banana-pro-vt'; // 默认使用更高质量模型
+      const STORE_KEY = 'grsai_ppt:key';
+      const HISTORY_KEY = 'grsai_ppt:history';
+      const POLL_INTERVAL = 5000;
+      const MAX_POLL_ATTEMPTS = 120;
 
       // 状态变量
       let activeCustomImages = [];   // 用户手动上传的 (Base64)
@@ -1442,9 +1442,11 @@
         try {
           // 使用静默模式，不更新主界面状态栏
           const result = await pollTaskStatus(taskId, key, 1, true);
-          renderHistoryList();
         } catch (e) {
           console.error('刷新失败:', e);
+        } finally {
+          // 无论成功还是失败，都刷新历史列表以显示最新状态
+          renderHistoryList();
         }
       };
 
@@ -1464,7 +1466,7 @@
         }
       };
 
-      // ================= 异步任务轮询 =================
+      // ================= 异步任务轮询 (Grsai API) =================
       async function pollTaskStatus(taskId, key, maxAttempts = MAX_POLL_ATTEMPTS, silent = false) {
         let attempts = 0;
 
@@ -1472,127 +1474,80 @@
           attempts++;
 
           try {
-            const res = await fetch(`${TASK_ENDPOINT}/${taskId}`, {
-              method: 'GET',
-              headers: { 'Authorization': 'Bearer ' + key }
+            const res = await fetch(RESULT_ENDPOINT, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + key
+              },
+              body: JSON.stringify({ id: taskId })
             });
 
             if (!res.ok) {
               let errStr = `Error ${res.status}`;
-              try { const j = await res.json(); if (j.error && j.error.message) errStr = j.error.message; } catch (e) { }
-              // 如果是404可能任务还没准备好，继续轮询
-              if (res.status === 404 && attempts < maxAttempts) {
-                if (!silent) msg(`正在生成中... (${attempts}/${maxAttempts})`);
-                await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
-                continue;
-              }
+              try { const j = await res.json(); if (j.msg) errStr = j.msg; } catch (e) { }
               throw new Error(errStr);
             }
 
             const data = await res.json();
             console.log(`轮询第 ${attempts} 次, 完整响应:`, JSON.stringify(data, null, 2));
 
-            // 尝试多种方式提取图片URL
-            let urls = [];
-
-            // 方式1: data.data.data.data 四层嵌套 (实际API返回格式)
-            // 结构: { code, data: { status, data: { data: [{ url }] } } }
-            if (data.data && data.data.data && data.data.data.data &&
-              Array.isArray(data.data.data.data) && data.data.data.data.length > 0) {
-              urls = data.data.data.data.map(i => {
-                if (i.url) return fixR2Url(i.url);
-                if (i.b64_json && i.b64_json !== '') return 'data:image/png;base64,' + i.b64_json;
-                return null;
-              }).filter(u => u !== null);
-              console.log('从 data.data.data.data 提取到URL:', urls);
+            // 任务不存在
+            if (data.code === -22) {
+              if (!silent) msg(`任务排队中... (${attempts}/${maxAttempts})`);
+              await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+              continue;
             }
 
-            // 方式2: data.data.data 三层嵌套
-            if (urls.length === 0 && data.data && data.data.data &&
-              Array.isArray(data.data.data) && data.data.data.length > 0) {
-              urls = data.data.data.map(i => {
-                if (i.url) return fixR2Url(i.url);
-                if (i.b64_json && i.b64_json !== '') return 'data:image/png;base64,' + i.b64_json;
-                return null;
-              }).filter(u => u !== null);
-              console.log('从 data.data.data 提取到URL:', urls);
-            }
+            if (data.code === 0 && data.data) {
+              const task = data.data;
+              const status = task.status;
+              const progress = task.progress || 0;
 
-            // 方式3: data.data 是数组 (flat结构)
-            if (urls.length === 0 && data.data && Array.isArray(data.data) && data.data.length > 0) {
-              urls = data.data.map(i => {
-                if (i.url) return fixR2Url(i.url);
-                if (i.b64_json && i.b64_json !== '') return 'data:image/png;base64,' + i.b64_json;
-                return null;
-              }).filter(u => u !== null);
-              console.log('从 data.data 提取到URL:', urls);
-            }
-
-            // 方式4: data 直接包含 url
-            if (urls.length === 0 && data.url) {
-              urls = [fixR2Url(data.url)];
-            }
-
-            // ========== 状态检测（优先检查status字段）==========
-            // API响应可能是 data.status 或 data.data.status
-            const status = (data.status || data.data?.status || '').toUpperCase();
-            console.log('任务状态:', status, '图片数量:', urls.length);
-
-            // 1. 明确失败：只有 FAILURE 才算真正失败
-            if (status === 'FAILURE') {
-              addHistoryItem(taskId, 'failed', []);
-              throw new Error(data.fail_reason || '任务失败');
-            }
-
-            // 2. 明确成功：SUCCESS/COMPLETED/DONE/FINISHED
-            if (status === 'SUCCESS' || status === 'COMPLETED' || status === 'DONE' || status === 'FINISHED') {
-              // 尝试从更多地方提取图片URL
-              if (urls.length === 0 && data.data && typeof data.data === 'object' && data.data.url) {
-                urls = [fixR2Url(data.data.url)];
-              }
-              console.log('任务成功，最终图片URL:', urls);
-
-              // 如果成功但没有图片，通常是因为内容审核
-              if (urls.length === 0) {
-                addHistoryItem(taskId, 'rejected', []);
-                return { success: true, urls: [], rejected: true };
+              // 成功完成
+              if (status === 'succeeded') {
+                const urls = (task.results || []).map(r => fixR2Url(r.url)).filter(u => u);
+                if (urls.length > 0) {
+                  addHistoryItem(taskId, 'completed', urls);
+                  return { success: true, urls };
+                } else {
+                  addHistoryItem(taskId, 'rejected', []);
+                  return { success: true, urls: [], rejected: true };
+                }
               }
 
-              addHistoryItem(taskId, 'completed', urls);
-              return { success: true, urls };
-            }
+              // 失败
+              if (status === 'failed') {
+                addHistoryItem(taskId, 'failed', []);
+                const reason = task.failure_reason || task.error || '生成失败';
+                return { success: false, failed: true, reason };
+              }
 
-            // 3. 如果已经找到图片URL，也算成功
-            if (urls.length > 0) {
-              console.log('找到图片URL，标记为成功:', urls);
-              addHistoryItem(taskId, 'completed', urls);
-              return { success: true, urls };
+              // 进行中
+              if (status === 'running') {
+                addHistoryItem(taskId, 'pending', []);
+                if (!silent) msg(`生成中... ${progress}% (${attempts}/${maxAttempts})`);
+              }
             }
-
-            // 4. 其他状态（NOT_START, PENDING, PROCESSING, RUNNING, QUEUED 等）都算处理中
-            addHistoryItem(taskId, 'pending', []);
-            const progress = data.progress || '';
-            if (!silent) msg(`正在生成中... ${status} ${progress} (${attempts}/${maxAttempts})`);
 
           } catch (err) {
             console.error(`轮询失败 (尝试 ${attempts}):`, err);
             if (attempts >= maxAttempts) {
-              // 这里是请求失败，不是API返回失败，用timeout状态
               addHistoryItem(taskId, 'timeout', []);
               throw err;
             }
           }
 
-          // 等待后继续轮询
           if (attempts < maxAttempts) {
             await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
           }
         }
-        // 本地轮询超时，使用timeout状态（可刷新）
+
         addHistoryItem(taskId, 'timeout', []);
-        if (!silent) throw new Error('轮询超时，请稍后在历史记录中刷新查看');
+        if (!silent) throw new Error('轮询超时，请稍后在历史记录中刷新');
         return { success: false, urls: [] };
       }
+
 
       // ================= 核心生成 =================
       ui.saveKey.onclick = () => { localStorage.setItem(STORE_KEY, ui.key.value.trim()); msg('Key 已保存'); };
@@ -1635,71 +1590,69 @@
         msg(`正在提交生成任务 [${usedStyleName}] 风格PPT...`);
 
         try {
+          // Grsai API 格式
           const payload = {
             model: MODEL,
             prompt: finalPrompt,
-            aspect_ratio: ui.ratio.value || "16:9",
-            image_size: ui.size.value
+            aspectRatio: ui.ratio.value || "16:9",
+            imageSize: ui.size.value,
+            webHook: "-1",  // 异步模式：返回任务ID
+            shutProgress: true
           };
 
           // 只有当有图片时才加入 payload
           if (imagesToSend.length > 0) {
-            payload.image = imagesToSend;
+            payload.urls = imagesToSend;
           }
 
-          // 使用异步模式提交请求
-          const res = await fetch(`${ENDPOINT}?async=true`, {
+          // 提交生成请求
+          const res = await fetch(ENDPOINT, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + key,
+              'oss-id': '692b1ce0469719c8c4c5af05',
+              'oss-path': 'bananaproimage'
+            },
             body: JSON.stringify(payload)
           });
 
           if (!res.ok) {
+            if (res.status === 413) {
+              throw new Error('413错误，上传的附件太大');
+            }
             let errStr = `Error ${res.status}`;
-            try { const j = await res.json(); if (j.error && j.error.message) errStr = j.error.message; } catch (e) { }
+            try { const j = await res.json(); if (j.msg) errStr = j.msg; } catch (e) { }
             throw new Error(errStr);
           }
 
           const data = await res.json();
           console.log('Async API Response:', data);
 
-          // 检查是否返回了 task_id
-          if (data.task_id) {
-            const taskId = data.task_id;
+          // Grsai API 返回格式: { code: 0, data: { id: "xxx" } }
+          if (data.code === 0 && data.data?.id) {
+            const taskId = data.data.id;
             msg(`任务已提交，正在等待生成结果... (Task ID: ${taskId.slice(0, 8)}...)`);
 
-            // 将任务添加到历史记录
             addHistoryItem(taskId, 'pending', [], finalPrompt);
 
-            // 开始轮询任务状态
             try {
               const result = await pollTaskStatus(taskId, key);
               if (result.success && result.urls.length > 0) {
                 msg('设计完成');
                 addGallery(result.urls, finalPrompt);
+              } else if (result.rejected) {
+                msg('内容审核未通过，请修改描述后重试', true);
+              } else if (result.failed) {
+                msg(`生成失败: ${result.reason}`, true);
               } else {
                 throw new Error('未返回有效图片');
               }
             } catch (pollErr) {
-              // 轮询失败但任务已记录，用户可以稍后查看历史
               msg(`${pollErr.message}`, true);
             }
-          } else if (data.data && data.data.length > 0) {
-            // 兼容同步返回的情况
-            const urls = data.data.map(i => {
-              if (i.url) return fixR2Url(i.url);
-              if (i.b64_json) return 'data:image/png;base64,' + i.b64_json;
-              return null;
-            }).filter(u => u !== null);
-
-            if (urls.length) {
-              msg('设计完成');
-              addGallery(urls, finalPrompt);
-            } else {
-              throw new Error('未返回有效图片');
-            }
           } else {
-            throw new Error('未返回有效的任务ID或图片数据');
+            throw new Error(data.msg || '未返回有效的任务ID');
           }
         } catch (err) {
           console.error(err);
