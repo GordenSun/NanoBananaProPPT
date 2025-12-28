@@ -914,6 +914,7 @@
           <div class="key-input-row">
             <input type="text" id="userKey" placeholder="sk-..." style="height:34px;">
             <button class="btn-sm" id="saveKey">保存</button>
+            <button class="btn-sm" id="queryCredits">查询剩余</button>
           </div>
         </div>
         <button class="btn-generate" id="go">
@@ -1164,7 +1165,7 @@
       const PUBLIC_R2_DOMAIN = 'https://cdn.gordensun.com/bananaproimage';
       const ENDPOINT = 'https://grsai.dakka.com.cn/v1/draw/nano-banana';
       const RESULT_ENDPOINT = 'https://grsai.dakka.com.cn/v1/draw/result';
-      const MODEL = 'nano-banana-pro'; // 默认使用更稳定模型
+      const MODEL = 'nano-banana-pro'; // 默认使用更高质量模型
       const STORE_KEY = 'grsai_ppt:key';
       const HISTORY_KEY = 'grsai_ppt:history';
       const POLL_INTERVAL = 5000;
@@ -1187,6 +1188,7 @@
         size: document.getElementById('sizeSelect'),
         key: document.getElementById('userKey'),
         saveKey: document.getElementById('saveKey'),
+        queryCredits: document.getElementById('queryCredits'),
         styleList: document.getElementById('styleList'),
         dropArea: document.getElementById('dropArea'),
         fileInput: document.getElementById('fileInput'),
@@ -1551,6 +1553,31 @@
 
       // ================= 核心生成 =================
       ui.saveKey.onclick = () => { localStorage.setItem(STORE_KEY, ui.key.value.trim()); msg('Key 已保存'); };
+
+      // 查询剩余次数
+      ui.queryCredits.onclick = async () => {
+        const key = ui.key.value.trim();
+        if (!key) return msg('请先填写 Key', true);
+
+        msg('正在查询剩余次数...');
+        try {
+          const res = await fetch('https://grsai.dakka.com.cn/client/openapi/getAPIKeyCredits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiKey: key })
+          });
+          const data = await res.json();
+          if (data.code === 0 && data.data && typeof data.data.credits === 'number') {
+            const credits = data.data.credits;
+            const remainingUses = Math.floor(credits / 1800);
+            msg(`剩余次数: ${remainingUses} 次`);
+          } else {
+            msg('查询失败: ' + (data.msg || '未知错误'), true);
+          }
+        } catch (e) {
+          msg('查询失败: ' + e.message, true);
+        }
+      };
 
       ui.go.onclick = async () => {
         const promptRaw = ui.prompt.value.trim();
